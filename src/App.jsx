@@ -4,105 +4,87 @@ import * as THREE from "three";
 class AmbientSynth {
   constructor() {
     this.ctx = null;
-    this.gainNode = null;
-    this.oscillator = null;
-    this.noiseNode = null;
-    this.chiselInterval = null;
+    this.masterGain = null;
+    this.reverbNode = null;
+    this.notes = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25]; // C4 D4 E4 G4 A4 C5
+    this.playing = false;
+    this.timeout = null;
   }
+
+  playNote(freq, time) {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, time);
+
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(800 + Math.random() * 400, time);
+
+    const vol = 0.06 + Math.random() * 0.04;
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(vol, time + 0.08);
+    gain.gain.linearRampToValueAtTime(vol * 0.7, time + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 2.0 + Math.random() * 1.5);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.reverbNode);
+
+    osc.start(time);
+    osc.stop(time + 3.0);
+  }
+
+  scheduleNext() {
+    if (!this.playing) return;
+    const now = this.ctx.currentTime;
+    const delay = 2.5 + Math.random() * 4;
+    const freq = this.notes[Math.floor(Math.random() * this.notes.length)];
+    this.playNote(freq, now + delay * 0.3);
+    if (Math.random() > 0.6) {
+      const freq2 = this.notes[Math.floor(Math.random() * this.notes.length)];
+      this.playNote(freq2, now + delay * 0.6);
+    }
+    this.timeout = setTimeout(() => this.scheduleNext(), delay * 1000);
+  }
+
   start() {
     try {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this.gainNode = this.ctx.createGain();
-      this.gainNode.gain.setValueAtTime(0.04, this.ctx.currentTime); // Soft volume
-      this.gainNode.connect(this.ctx.destination);
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      this.masterGain.connect(this.ctx.destination);
 
-      // Create a low room drone
-      this.oscillator = this.ctx.createOscillator();
-      this.oscillator.type = "sine";
-      this.oscillator.frequency.setValueAtTime(75, this.ctx.currentTime);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = "lowpass";
-      filter.frequency.setValueAtTime(130, this.ctx.currentTime);
-
-      this.oscillator.connect(filter);
-      filter.connect(this.gainNode);
-      this.oscillator.start();
-
-      // Create a very soft white noise for air/room tone
-      const bufferSize = 2 * this.ctx.sampleRate;
-      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
-      }
-      this.noiseNode = this.ctx.createBufferSource();
-      this.noiseNode.buffer = noiseBuffer;
-      this.noiseNode.loop = true;
-
-      const noiseFilter = this.ctx.createBiquadFilter();
-      noiseFilter.type = "bandpass";
-      noiseFilter.frequency.setValueAtTime(250, this.ctx.currentTime);
-      noiseFilter.Q.setValueAtTime(0.4, this.ctx.currentTime);
-
-      const noiseGain = this.ctx.createGain();
-      noiseGain.gain.setValueAtTime(0.008, this.ctx.currentTime);
-
-      this.noiseNode.connect(noiseFilter);
-      noiseFilter.connect(noiseGain);
-      noiseGain.connect(this.gainNode);
-      this.noiseNode.start();
-
-      // Occasional soft sculptor chisel clinks
-      this.chiselInterval = setInterval(() => {
-        if (Math.random() > 0.4) {
-          this.playChiselClick();
+      this.reverbNode = this.ctx.createConvolver();
+      const rate = this.ctx.sampleRate;
+      const len = rate * 2;
+      const buffer = this.ctx.createBuffer(2, len, rate);
+      for (let ch = 0; ch < 2; ch++) {
+        const data = buffer.getChannelData(ch);
+        for (let i = 0; i < len; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (rate * 0.3));
         }
-      }, 4000);
+      }
+      this.reverbNode.buffer = buffer;
+      this.reverbNode.connect(this.masterGain);
+
+      this.playing = true;
+      this.scheduleNext();
     } catch (e) {
       console.error("Failed to start Ambient Audio: ", e);
     }
   }
 
-  playChiselClick() {
-    if (!this.ctx) return;
-    try {
-      const clickOsc = this.ctx.createOscillator();
-      const clickGain = this.ctx.createGain();
-      
-      clickOsc.type = "sine";
-      clickOsc.frequency.setValueAtTime(1500 + Math.random() * 800, this.ctx.currentTime);
-      
-      clickGain.gain.setValueAtTime(0.003 + Math.random() * 0.003, this.ctx.currentTime);
-      clickGain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.4);
-
-      const clickFilter = this.ctx.createBiquadFilter();
-      clickFilter.type = "highpass";
-      clickFilter.frequency.setValueAtTime(1200, this.ctx.currentTime);
-
-      clickOsc.connect(clickFilter);
-      clickFilter.connect(clickGain);
-      clickGain.connect(this.ctx.destination);
-      
-      clickOsc.start();
-      clickOsc.stop(this.ctx.currentTime + 0.4);
-    } catch (e) {
-      // Ignore audio scheduling errors
-    }
-  }
-
   stop() {
-    if (this.oscillator) {
-      try { this.oscillator.stop(); } catch (e) {}
-    }
-    if (this.noiseNode) {
-      try { this.noiseNode.stop(); } catch (e) {}
-    }
-    if (this.chiselInterval) {
-      clearInterval(this.chiselInterval);
+    this.playing = false;
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
     }
     if (this.ctx) {
       try { this.ctx.close(); } catch (e) {}
+      this.ctx = null;
     }
   }
 }
