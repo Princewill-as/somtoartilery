@@ -1570,6 +1570,20 @@ footer p {
   color: #080808;
 }
 
+.collection-section.dark-room .lightbox-info {
+  color: var(--ink);
+}
+
+.collection-section.dark-room .lightbox-info h3,
+.collection-section.dark-room .lightbox-info p,
+.collection-section.dark-room .lightbox-info .product-details dd {
+  color: var(--ink);
+}
+
+.collection-section.dark-room .lightbox-info .product-details dt {
+  color: var(--muted);
+}
+
 .dark-room-toggle-btn {
   transition: all 0.3s ease;
 }
@@ -1589,8 +1603,8 @@ footer p {
   z-index: 2;
   mix-blend-mode: multiply;
   opacity: 0.94;
-  mask-image: radial-gradient(circle 220px at var(--grid-mouse-x, -500px) var(--grid-mouse-y, -500px), transparent 10%, black 85%);
-  -webkit-mask-image: radial-gradient(circle 220px at var(--grid-mouse-x, -500px) var(--grid-mouse-y, -500px), transparent 10%, black 85%);
+  mask-image: radial-gradient(circle 400px at var(--grid-mouse-x, -500px) var(--grid-mouse-y, -500px), transparent 10%, black 85%);
+  -webkit-mask-image: radial-gradient(circle 400px at var(--grid-mouse-x, -500px) var(--grid-mouse-y, -500px), transparent 10%, black 85%);
 }
 
 /* Ambient sound waves indicator styling */
