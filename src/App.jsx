@@ -111,7 +111,7 @@ const products = [
   {
     name: "Abstract Lady",
     material: "Oil on canvas",
-    price: "₦4,500,000",
+    price: "₦200,000",
     category: "painting",
     dimensions: "90 x 120 cm",
     availability: "Available now",
@@ -122,7 +122,7 @@ const products = [
   {
     name: "Untitled Composition",
     material: "Mixed media",
-    price: "₦3,800,000",
+    price: "₦800,000",
     category: "painting",
     dimensions: "73 x 111 cm",
     availability: "Available now",
@@ -133,7 +133,7 @@ const products = [
   {
     name: "Abstract Study",
     material: "Mixed media",
-    price: "₦3,200,000",
+    price: "₦4,500,000",
     category: "painting",
     dimensions: "60 x 80 cm",
     availability: "Available now",
@@ -144,7 +144,7 @@ const products = [
   {
     name: "Dreamscape",
     material: "Mixed media",
-    price: "₦3,600,000",
+    price: "₦600,000",
     category: "painting",
     dimensions: "70 x 90 cm",
     availability: "Available now",
