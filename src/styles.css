@@ -87,6 +87,7 @@ textarea {
 
 .brand {
   gap: 10px;
+  font-family: var(--font-headings);
   font-weight: 200;
   text-transform: uppercase;
 }
