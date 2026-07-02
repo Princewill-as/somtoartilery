@@ -135,7 +135,7 @@ function Hero() {
           <a className="button primary" href="#collection">
             View Collection
           </a>
-          <a className="button secondary" href="#visit">
+          <a className="button secondary" href="#auth">
             Book Viewing
           </a>
         </div>
