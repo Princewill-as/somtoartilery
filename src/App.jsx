@@ -1,4 +1,111 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
+import * as THREE from "three";
+
+class AmbientSynth {
+  constructor() {
+    this.ctx = null;
+    this.gainNode = null;
+    this.oscillator = null;
+    this.noiseNode = null;
+    this.chiselInterval = null;
+  }
+  start() {
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.gainNode = this.ctx.createGain();
+      this.gainNode.gain.setValueAtTime(0.04, this.ctx.currentTime); // Soft volume
+      this.gainNode.connect(this.ctx.destination);
+
+      // Create a low room drone
+      this.oscillator = this.ctx.createOscillator();
+      this.oscillator.type = "sine";
+      this.oscillator.frequency.setValueAtTime(75, this.ctx.currentTime);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(130, this.ctx.currentTime);
+
+      this.oscillator.connect(filter);
+      filter.connect(this.gainNode);
+      this.oscillator.start();
+
+      // Create a very soft white noise for air/room tone
+      const bufferSize = 2 * this.ctx.sampleRate;
+      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      this.noiseNode = this.ctx.createBufferSource();
+      this.noiseNode.buffer = noiseBuffer;
+      this.noiseNode.loop = true;
+
+      const noiseFilter = this.ctx.createBiquadFilter();
+      noiseFilter.type = "bandpass";
+      noiseFilter.frequency.setValueAtTime(250, this.ctx.currentTime);
+      noiseFilter.Q.setValueAtTime(0.4, this.ctx.currentTime);
+
+      const noiseGain = this.ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.008, this.ctx.currentTime);
+
+      this.noiseNode.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(this.gainNode);
+      this.noiseNode.start();
+
+      // Occasional soft sculptor chisel clinks
+      this.chiselInterval = setInterval(() => {
+        if (Math.random() > 0.4) {
+          this.playChiselClick();
+        }
+      }, 4000);
+    } catch (e) {
+      console.error("Failed to start Ambient Audio: ", e);
+    }
+  }
+
+  playChiselClick() {
+    if (!this.ctx) return;
+    try {
+      const clickOsc = this.ctx.createOscillator();
+      const clickGain = this.ctx.createGain();
+      
+      clickOsc.type = "sine";
+      clickOsc.frequency.setValueAtTime(1500 + Math.random() * 800, this.ctx.currentTime);
+      
+      clickGain.gain.setValueAtTime(0.003 + Math.random() * 0.003, this.ctx.currentTime);
+      clickGain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.4);
+
+      const clickFilter = this.ctx.createBiquadFilter();
+      clickFilter.type = "highpass";
+      clickFilter.frequency.setValueAtTime(1200, this.ctx.currentTime);
+
+      clickOsc.connect(clickFilter);
+      clickFilter.connect(clickGain);
+      clickGain.connect(this.ctx.destination);
+      
+      clickOsc.start();
+      clickOsc.stop(this.ctx.currentTime + 0.4);
+    } catch (e) {
+      // Ignore audio scheduling errors
+    }
+  }
+
+  stop() {
+    if (this.oscillator) {
+      try { this.oscillator.stop(); } catch (e) {}
+    }
+    if (this.noiseNode) {
+      try { this.noiseNode.stop(); } catch (e) {}
+    }
+    if (this.chiselInterval) {
+      clearInterval(this.chiselInterval);
+    }
+    if (this.ctx) {
+      try { this.ctx.close(); } catch (e) {}
+    }
+  }
+}
 
 const products = [
   {
@@ -60,7 +167,7 @@ const products = [
 
 const filters = ["all", "painting"];
 
-function Header({ inquiryCount, onOpenCart, user, onLogout, isAdminActive, onToggleAdmin }) {
+function Header({ inquiryCount, onOpenCart, user, onLogout, isAdminActive, onToggleAdmin, ambientPlaying, onToggleAmbient }) {
   const [navOpen, setNavOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("");
 
@@ -123,6 +230,33 @@ function Header({ inquiryCount, onOpenCart, user, onLogout, isAdminActive, onTog
           </button>
         )}
         {!isAdminActive && (
+          <button 
+            className={`ambient-toggle-btn ${ambientPlaying ? "playing" : ""}`}
+            type="button" 
+            onClick={onToggleAmbient} 
+            title="Toggle Ambient Gallery Soundscape"
+            style={{
+              background: "none",
+              border: "1px solid var(--line)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 12px",
+              fontSize: "0.85rem",
+              fontWeight: "600",
+              color: "var(--muted)"
+            }}
+          >
+            <span className="sound-wave">
+              <span className="bar" />
+              <span className="bar" />
+              <span className="bar" />
+            </span>
+            <span>{ambientPlaying ? "Mute Gallery" : "Gallery Ambient"}</span>
+          </button>
+        )}
+        {!isAdminActive && (
           <button className="cart-button" type="button" onClick={onOpenCart} aria-label="Open inquiry bag">
             <span className="cart-icon" aria-hidden="true">
               +
@@ -144,6 +278,7 @@ function Header({ inquiryCount, onOpenCart, user, onLogout, isAdminActive, onTog
     </header>
   );
 }
+
 
 function Hero() {
   return (
@@ -243,24 +378,381 @@ function AudioGuide({ text }) {
   );
 }
 
+function VirtualStudio() {
+  const mountRef = useRef(null);
+  const [shape, setShape] = useState("knot"); // knot, sphere, monolith
+  const [material, setMaterial] = useState("marble"); // marble, bronze, clay, wood
+  const [autoRotate, setAutoRotate] = useState(true);
+  const [rotationSpeed, setRotationSpeed] = useState(0.005);
+  
+  const shapeRef = useRef(shape);
+  const materialRef = useRef(material);
+  const autoRotateRef = useRef(autoRotate);
+  const rotationSpeedRef = useRef(rotationSpeed);
+
+  // Keep refs updated for the animation loop
+  useEffect(() => { shapeRef.current = shape; }, [shape]);
+  useEffect(() => { materialRef.current = material; }, [material]);
+  useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
+  useEffect(() => { rotationSpeedRef.current = rotationSpeed; }, [rotationSpeed]);
+
+  useEffect(() => {
+    const container = mountRef.current;
+    if (!container) return;
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf7f1e7); // var(--paper)
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(0, 2.5, 6);
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    const mainLight = new THREE.DirectionalLight(0xfffaf2, 1.2);
+    mainLight.position.set(5, 8, 5);
+    mainLight.castShadow = true;
+    mainLight.shadow.mapSize.width = 1024;
+    mainLight.shadow.mapSize.height = 1024;
+    mainLight.shadow.bias = -0.001;
+    scene.add(mainLight);
+
+    // Studio Spotlight for dramatic contrast
+    const spotlight = new THREE.SpotLight(0xb9934a, 2.5); // var(--brass) tint
+    spotlight.position.set(-4, 6, 2);
+    spotlight.angle = Math.PI / 6;
+    spotlight.penumbra = 0.8;
+    spotlight.castShadow = true;
+    scene.add(spotlight);
+
+    // Floor / Plinth Base Shadow Receiver
+    const floorGeo = new THREE.PlaneGeometry(10, 10);
+    const floorMat = new THREE.ShadowMaterial({ opacity: 0.12 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -1.2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Build the Plinth (Pedestal)
+    const plinthGroup = new THREE.Group();
+    const plinthGeo = new THREE.CylinderGeometry(0.8, 0.85, 1.2, 32);
+    const plinthMat = new THREE.MeshStandardMaterial({
+      color: 0xd7d0c4, // var(--stone)
+      roughness: 0.5,
+      metalness: 0.1
+    });
+    const plinth = new THREE.Mesh(plinthGeo, plinthMat);
+    plinth.position.y = -0.6;
+    plinth.castShadow = true;
+    plinth.receiveShadow = true;
+    plinthGroup.add(plinth);
+    scene.add(plinthGroup);
+
+    // Sculpture Group
+    const sculptureGroup = new THREE.Group();
+    sculptureGroup.position.y = 0.6; // sits on the plinth
+    scene.add(sculptureGroup);
+
+    // Materials dictionary
+    const getMaterial = (matName) => {
+      switch (matName) {
+        case "marble":
+          return new THREE.MeshPhysicalMaterial({
+            color: 0xfffaf2, // var(--chalk)
+            roughness: 0.1,
+            metalness: 0.0,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1,
+            transmission: 0.1, // soft light pass-through
+            thickness: 0.5
+          });
+        case "bronze":
+          return new THREE.MeshStandardMaterial({
+            color: 0x3d301b,
+            roughness: 0.35,
+            metalness: 0.95
+          });
+        case "clay":
+          return new THREE.MeshStandardMaterial({
+            color: 0xb75b3f, // var(--clay)
+            roughness: 0.95,
+            metalness: 0.0
+          });
+        case "wood":
+          return new THREE.MeshStandardMaterial({
+            color: 0x5c4033, // deep walnut
+            roughness: 0.25,
+            metalness: 0.1
+          });
+        default:
+          return new THREE.MeshStandardMaterial({ color: 0x999999 });
+      }
+    };
+
+    // Geometries
+    let currentMesh = null;
+
+    const updateSculpture = () => {
+      // Clear old sculpture mesh
+      if (currentMesh) {
+        sculptureGroup.remove(currentMesh);
+        currentMesh.geometry.dispose();
+      }
+
+      let geo;
+      const sh = shapeRef.current;
+      if (sh === "knot") {
+        geo = new THREE.TorusKnotGeometry(0.48, 0.15, 120, 16);
+      } else if (sh === "sphere") {
+        geo = new THREE.IcosahedronGeometry(0.65, 3);
+        // Deform vertices slightly to make it organic
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i);
+          const y = pos.getY(i);
+          const z = pos.getZ(i);
+          // Apply a noise wave
+          const wave = Math.sin(x * 4) * Math.cos(y * 4) * Math.sin(z * 4) * 0.08;
+          pos.setX(i, x + wave * (x/0.65));
+          pos.setY(i, y + wave * (y/0.65));
+          pos.setZ(i, z + wave * (z/0.65));
+        }
+        geo.computeVertexNormals();
+      } else {
+        // Monolith (Rounded box with cuts)
+        geo = new THREE.BoxGeometry(0.7, 1.1, 0.5, 4, 4, 4);
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          let x = pos.getX(i);
+          let y = pos.getY(i);
+          let z = pos.getZ(i);
+          // Curve it inwards slightly in the middle to represent a modern sculpted form
+          const factor = 1.0 - Math.abs(y) * 0.4;
+          pos.setX(i, x * factor);
+          pos.setZ(i, z * factor);
+        }
+        geo.computeVertexNormals();
+      }
+
+      const mat = getMaterial(materialRef.current);
+      currentMesh = new THREE.Mesh(geo, mat);
+      currentMesh.castShadow = true;
+      currentMesh.receiveShadow = true;
+      sculptureGroup.add(currentMesh);
+    };
+
+    updateSculpture();
+
+    // Look at sculpture
+    camera.lookAt(0, 0.4, 0);
+
+    // Interaction handlers
+    let isDragging = false;
+    let prevPointerPos = { x: 0, y: 0 };
+
+    const handlePointerDown = (e) => {
+      isDragging = true;
+      prevPointerPos = { x: e.clientX, y: e.clientY };
+    };
+
+    const handlePointerMove = (e) => {
+      if (!isDragging) return;
+      const deltaX = e.clientX - prevPointerPos.x;
+      const deltaY = e.clientY - prevPointerPos.y;
+
+      sculptureGroup.rotation.y += deltaX * 0.007;
+      sculptureGroup.rotation.x += deltaY * 0.007;
+
+      prevPointerPos = { x: e.clientX, y: e.clientY };
+    };
+
+    const handlePointerUp = () => {
+      isDragging = false;
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+
+    // Animation Loop
+    let reqId;
+    let prevMaterial = materialRef.current;
+    let prevShape = shapeRef.current;
+
+    const animate = () => {
+      reqId = requestAnimationFrame(animate);
+
+      // Check for changes in parameters
+      if (materialRef.current !== prevMaterial || shapeRef.current !== prevShape) {
+        updateSculpture();
+        prevMaterial = materialRef.current;
+        prevShape = shapeRef.current;
+      }
+
+      if (autoRotateRef.current && !isDragging) {
+        sculptureGroup.rotation.y += rotationSpeedRef.current;
+      }
+
+      renderer.render(scene, camera);
+    };
+
+    animate();
+
+    // Resize Handler
+    const handleResize = () => {
+      if (!container) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    };
+    window.addEventListener("resize", handleResize);
+
+    // Cleanup
+    return () => {
+      cancelAnimationFrame(reqId);
+      window.removeEventListener("resize", handleResize);
+      container.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      renderer.dispose();
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
+    };
+  }, []);
+
+  return (
+    <section className="virtual-studio-section" aria-labelledby="studio-title">
+      <div className="studio-container">
+        <div className="studio-viewer" ref={mountRef} id="3d-canvas-container" title="Drag cursor to rotate sculpture">
+          <div className="studio-badge">Virtual Studio</div>
+        </div>
+        <div className="studio-controls">
+          <p className="eyebrow">Interactive Exhibition</p>
+          <h2 id="studio-title">The Virtual Studio</h2>
+          <p className="studio-desc">
+            Sculptures possess weight, shadow, and tactile presence. Explore these virtual forms in high-fidelity 3D. Spin the plinth, adjust studio lighting, and experiment with material surfaces.
+          </p>
+
+          <div className="control-group">
+            <h3>Select Form</h3>
+            <div className="option-row">
+              <button className={`option-btn ${shape === "knot" ? "active" : ""}`} onClick={() => setShape("knot")}>Eternal Knot</button>
+              <button className={`option-btn ${shape === "sphere" ? "active" : ""}`} onClick={() => setShape("sphere")}>Genesis Sphere</button>
+              <button className={`option-btn ${shape === "monolith" ? "active" : ""}`} onClick={() => setShape("monolith")}>The Monolith</button>
+            </div>
+          </div>
+
+          <div className="control-group">
+            <h3>Material Family</h3>
+            <div className="option-row">
+              <button className={`option-btn ${material === "marble" ? "active" : ""}`} onClick={() => setMaterial("marble")}>Carrara Marble</button>
+              <button className={`option-btn ${material === "bronze" ? "active" : ""}`} onClick={() => setMaterial("bronze")}>Cast Bronze</button>
+              <button className={`option-btn ${material === "clay" ? "active" : ""}`} onClick={() => setMaterial("clay")}>Terracotta</button>
+              <button className={`option-btn ${material === "wood" ? "active" : ""}`} onClick={() => setMaterial("wood")}>Polished Walnut</button>
+            </div>
+          </div>
+
+          <div className="control-group toggles-group">
+            <label className="toggle-label">
+              <input type="checkbox" checked={autoRotate} onChange={(e) => setAutoRotate(e.target.checked)} />
+              <span>Plinth Auto-Rotation</span>
+            </label>
+            {autoRotate && (
+              <div className="slider-container">
+                <label>Rotation Speed</label>
+                <input type="range" min="0.001" max="0.02" step="0.001" value={rotationSpeed} onChange={(e) => setRotationSpeed(parseFloat(e.target.value))} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Collection({ onAdd, user }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [lightbox, setLightbox] = useState(null);
+  const [darkRoom, setDarkRoom] = useState(false);
+  const gridRef = useRef(null);
+
   const visibleProducts = useMemo(() => {
     if (activeFilter === "all") return products;
     return products.filter((product) => product.category === activeFilter);
   }, [activeFilter]);
 
-  function closeLightbox() {
-    setLightbox(null);
-  }
+  const handleFilterChange = (filter) => {
+    if (document.startViewTransition) {
+      document.startViewTransition(() => setActiveFilter(filter));
+    } else {
+      setActiveFilter(filter);
+    }
+  };
+
+  const handleImageClick = (product, event) => {
+    const imgEl = event.currentTarget;
+    imgEl.style.viewTransitionName = "active-artwork-image";
+    
+    if (document.startViewTransition) {
+      const transition = document.startViewTransition(() => {
+        setLightbox(product);
+      });
+      transition.finished.finally(() => {
+        imgEl.style.viewTransitionName = "";
+      });
+    } else {
+      setLightbox(product);
+    }
+  };
+
+  const closeLightbox = () => {
+    if (document.startViewTransition) {
+      document.startViewTransition(() => setLightbox(null));
+    } else {
+      setLightbox(null);
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!darkRoom || !gridRef.current) return;
+    const rect = gridRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    gridRef.current.style.setProperty("--grid-mouse-x", `${x}px`);
+    gridRef.current.style.setProperty("--grid-mouse-y", `${y}px`);
+  };
+
+  const toggleDarkRoom = () => {
+    if (document.startViewTransition) {
+      document.startViewTransition(() => setDarkRoom(!darkRoom));
+    } else {
+      setDarkRoom(!darkRoom);
+    }
+  };
 
   return (
-    <section className="collection-section" id="collection" aria-labelledby="collection-title">
+    <section className={`collection-section ${darkRoom ? "dark-room" : ""}`} id="collection" aria-labelledby="collection-title">
       {lightbox && (
         <div className="lightbox" onClick={closeLightbox}>
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <img src={lightbox.image} alt={lightbox.alt} />
+            <img 
+              src={lightbox.image} 
+              alt={lightbox.alt} 
+              style={{ viewTransitionName: "active-artwork-image" }}
+            />
             <div className="lightbox-info">
               <h3>{lightbox.name}</h3>
               <p className="material">{lightbox.material}</p>
@@ -280,63 +772,95 @@ function Collection({ onAdd, user }) {
           <p className="eyebrow">Current Collection</p>
           <h2 id="collection-title">Sculptures for considered spaces</h2>
         </div>
-        <div className="filter-tabs" role="tablist" aria-label="Filter sculptures">
-          {filters.map((filter) => (
-            <button
-              className={`filter-tab ${activeFilter === filter ? "active" : ""}`}
-              type="button"
-              key={filter}
-              onClick={() => setActiveFilter(filter)}
-            >
-              {filter[0].toUpperCase() + filter.slice(1)}
-            </button>
-          ))}
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
+          <button 
+            type="button" 
+            className={`dark-room-toggle-btn ${darkRoom ? "active" : ""}`}
+            onClick={toggleDarkRoom}
+            style={{
+              background: "none",
+              border: "1px solid var(--line)",
+              cursor: "pointer",
+              padding: "8px 16px",
+              fontSize: "0.85rem",
+              fontWeight: "600",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em"
+            }}
+          >
+            {darkRoom ? "☀️ Light Mode" : "🌙 Dark Room"}
+          </button>
+          <div className="filter-tabs" role="tablist" aria-label="Filter sculptures">
+            {filters.map((filter) => (
+              <button
+                className={`filter-tab ${activeFilter === filter ? "active" : ""}`}
+                type="button"
+                key={filter}
+                onClick={() => handleFilterChange(filter)}
+              >
+                {filter[0].toUpperCase() + filter.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="product-grid">
-        {visibleProducts.map((product) => (
-          <article className="product-card spotlight-hover" key={product.name}>
-            <img src={product.image} alt={product.alt} onClick={() => setLightbox(product)} />
-            <div className="product-info">
-              <div>
-                <p className="material">{product.material}</p>
-                <h3>{product.name}</h3>
+      <div 
+        className="product-grid-container" 
+        ref={gridRef}
+        onMouseMove={handleMouseMove}
+        style={{ position: "relative" }}
+      >
+        {darkRoom && <div className="dark-room-overlay" />}
+        <div className="product-grid">
+          {visibleProducts.map((product) => (
+            <article className="product-card spotlight-hover" key={product.name}>
+              <img 
+                src={product.image} 
+                alt={product.alt} 
+                onClick={(e) => handleImageClick(product, e)} 
+              />
+              <div className="product-info">
+                <div>
+                  <p className="material">{product.material}</p>
+                  <h3>{product.name}</h3>
+                </div>
+                <p className="price">{product.price}</p>
               </div>
-              <p className="price">{product.price}</p>
-            </div>
-            <p className="product-copy">{product.copy}</p>
-            <dl className="product-details">
-              <div>
-                <dt>Dimensions</dt>
-                <dd>{product.dimensions}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>{product.availability}</dd>
-              </div>
-            </dl>
-            <AudioGuide text={`${product.name}. A ${product.material} sculpture. Measuring ${product.dimensions}. ${product.copy}`} />
-            {user ? (
-              <button
-                className="button card-action"
-                type="button"
-                onClick={() => onAdd(product.name)}
-                aria-label={`Add ${product.name} to inquiry`}
-              >
-                Add to inquiry
-              </button>
-            ) : (
-              <a className="button card-action" href="#auth">
-                Sign in to add
-              </a>
-            )}
-          </article>
-        ))}
+              <p className="product-copy">{product.copy}</p>
+              <dl className="product-details">
+                <div>
+                  <dt>Dimensions</dt>
+                  <dd>{product.dimensions}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{product.availability}</dd>
+                </div>
+              </dl>
+              <AudioGuide text={`${product.name}. A ${product.material} sculpture. Measuring ${product.dimensions}. ${product.copy}`} />
+              {user ? (
+                <button
+                  className="button card-action"
+                  type="button"
+                  onClick={() => onAdd(product.name)}
+                  aria-label={`Add ${product.name} to inquiry`}
+                >
+                  Add to inquiry
+                </button>
+              ) : (
+                <a className="button card-action" href="#auth">
+                  Sign in to add
+                </a>
+              )}
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
 }
+
 
 function Atelier() {
   const services = [
@@ -738,7 +1262,7 @@ function CuratorCanvas({ inquiryItems, onClose }) {
     const initialScales = {};
     inquiryItems.forEach((item, index) => {
       const left = 15 + (index * 25) % 70;
-      const top = 30 + (index * 10) % 30;
+      const top = 25 + (index * 8) % 25;
       initialPos[item.name] = { x: left, top: top };
       initialScales[item.name] = 1.0;
     });
@@ -767,8 +1291,8 @@ function CuratorCanvas({ inquiryItems, onClose }) {
     setPositions((prev) => ({
       ...prev,
       [draggingItem]: {
-        x: Math.max(0, Math.min(85, leftPercent)),
-        top: Math.max(0, Math.min(80, topPercent))
+        x: Math.max(0, Math.min(88, leftPercent)),
+        top: Math.max(0, Math.min(75, topPercent))
       }
     }));
   };
@@ -805,6 +1329,9 @@ function CuratorCanvas({ inquiryItems, onClose }) {
         </div>
 
         <div className="gallery-wall">
+          <div className="wall-spotlight" style={{ left: "20%" }} />
+          <div className="wall-spotlight" style={{ left: "50%" }} />
+          <div className="wall-spotlight" style={{ left: "80%" }} />
           {inquiryItems.length === 0 ? (
             <div className="curator-empty">
               <h3>Your Inquiry Bag is Empty</h3>
@@ -813,12 +1340,12 @@ function CuratorCanvas({ inquiryItems, onClose }) {
             </div>
           ) : (
             inquiryItems.map((item) => {
-              const pos = positions[item.name] || { x: 50, top: 40 };
+              const pos = positions[item.name] || { x: 50, top: 30 };
               const scale = scales[item.name] || 1.0;
               return (
                 <div
                   key={item.name}
-                  className="draggable-artwork"
+                  className={`draggable-artwork ${draggingItem === item.name ? "dragging" : ""}`}
                   onPointerDown={(e) => handlePointerDown(e, item.name)}
                   style={{
                     left: `${pos.x}%`,
@@ -828,8 +1355,10 @@ function CuratorCanvas({ inquiryItems, onClose }) {
                   }}
                 >
                   <img src={item.image} alt={item.alt} />
-                  <h4>{item.name}</h4>
-                  <p>{item.dimensions}</p>
+                  <div className="artwork-meta-tag">
+                    <h4>{item.name}</h4>
+                    <p>{item.dimensions}</p>
+                  </div>
                 </div>
               );
             })
@@ -837,10 +1366,32 @@ function CuratorCanvas({ inquiryItems, onClose }) {
         </div>
 
         <div className="gallery-floor">
+          <div className="floor-reflection" />
           <div className="virtual-plinth-container">
-            <div className="virtual-plinth"><span className="plinth-label">Plinth Alpha</span></div>
-            <div className="virtual-plinth"><span className="plinth-label">Plinth Beta</span></div>
-            <div className="virtual-plinth"><span className="plinth-label">Plinth Gamma</span></div>
+            <div className="virtual-plinth">
+              <div className="plinth-3d-box">
+                <div className="plinth-face plinth-top" />
+                <div className="plinth-face plinth-front" />
+                <div className="plinth-face plinth-left" />
+              </div>
+              <span className="plinth-label">Pedestal I</span>
+            </div>
+            <div className="virtual-plinth">
+              <div className="plinth-3d-box">
+                <div className="plinth-face plinth-top" />
+                <div className="plinth-face plinth-front" />
+                <div className="plinth-face plinth-left" />
+              </div>
+              <span className="plinth-label">Pedestal II</span>
+            </div>
+            <div className="virtual-plinth">
+              <div className="plinth-3d-box">
+                <div className="plinth-face plinth-top" />
+                <div className="plinth-face plinth-front" />
+                <div className="plinth-face plinth-left" />
+              </div>
+              <span className="plinth-label">Pedestal III</span>
+            </div>
           </div>
         </div>
 
@@ -866,11 +1417,41 @@ function CuratorCanvas({ inquiryItems, onClose }) {
 
 export default function App() {
   const [inquiryItems, setInquiryItems] = useState([]);
-  const [cartOpen, setCartOpen] = useState(false);
+  const [cartOpen, setCartOpenState] = useState(false);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [isAdminActive, setIsAdminActive] = useState(false);
-  const [isCuratorActive, setIsCuratorActive] = useState(false);
+  const [isAdminActive, setIsAdminActiveState] = useState(false);
+  const [isCuratorActive, setIsCuratorActiveState] = useState(false);
+  const [ambientPlaying, setAmbientPlaying] = useState(false);
+
+  const synthRef = useRef(null);
+
+  // View transition wrapper helper
+  const withTransition = (updateFn) => {
+    if (document.startViewTransition) {
+      document.startViewTransition(updateFn);
+    } else {
+      updateFn();
+    }
+  };
+
+  const setCartOpen = (val) => withTransition(() => setCartOpenState(val));
+  const setIsAdminActive = (val) => withTransition(() => setIsAdminActiveState(val));
+  const setIsCuratorActive = (val) => withTransition(() => setIsCuratorActiveState(val));
+
+  // Toggle ambient soundscape
+  const toggleAmbient = () => {
+    if (!synthRef.current) {
+      synthRef.current = new AmbientSynth();
+    }
+    if (ambientPlaying) {
+      synthRef.current.stop();
+      setAmbientPlaying(false);
+    } else {
+      synthRef.current.start();
+      setAmbientPlaying(true);
+    }
+  };
 
   // Global mouse coordinates listener for spotlight effect
   useEffect(() => {
@@ -879,7 +1460,12 @@ export default function App() {
       document.documentElement.style.setProperty("--mouse-y", `${e.clientY}px`);
     };
     window.addEventListener("mousemove", handleMove);
-    return () => window.removeEventListener("mousemove", handleMove);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      if (synthRef.current) {
+        synthRef.current.stop();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -892,32 +1478,40 @@ export default function App() {
   }, []);
 
   function handleAuth(newToken, newUser) {
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem("token", newToken);
-    localStorage.setItem("user", JSON.stringify(newUser));
+    withTransition(() => {
+      setToken(newToken);
+      setUser(newUser);
+      localStorage.setItem("token", newToken);
+      localStorage.setItem("user", JSON.stringify(newUser));
+    });
   }
 
   function handleLogout() {
-    setToken(null);
-    setUser(null);
-    setIsAdminActive(false);
-    setIsCuratorActive(false);
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    withTransition(() => {
+      setToken(null);
+      setUser(null);
+      setIsAdminActiveState(false);
+      setIsCuratorActiveState(false);
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+    });
   }
 
   function addInquiryItem(productName) {
-    setInquiryItems((items) => {
-      if (items.find((i) => i.name === productName)) return items;
-      const product = products.find((p) => p.name === productName);
-      return product ? [...items, product] : items;
+    withTransition(() => {
+      setInquiryItems((items) => {
+        if (items.find((i) => i.name === productName)) return items;
+        const product = products.find((p) => p.name === productName);
+        return product ? [...items, product] : items;
+      });
+      setCartOpenState(true);
     });
-    setCartOpen(true);
   }
 
   function removeInquiryItem(productName) {
-    setInquiryItems((items) => items.filter((item) => item.name !== productName));
+    withTransition(() => {
+      setInquiryItems((items) => items.filter((item) => item.name !== productName));
+    });
   }
 
   return (
@@ -929,6 +1523,8 @@ export default function App() {
         onLogout={handleLogout} 
         isAdminActive={isAdminActive}
         onToggleAdmin={setIsAdminActive}
+        ambientPlaying={ambientPlaying}
+        onToggleAmbient={toggleAmbient}
       />
       <main id="top">
         {isAdminActive ? (
@@ -939,6 +1535,7 @@ export default function App() {
           <>
             <Hero />
             <Intro />
+            <VirtualStudio />
             <Collection onAdd={addInquiryItem} user={user} />
             <Atelier />
             {user ? (
