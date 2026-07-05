@@ -82,6 +82,22 @@ function authMiddleware(req, res, next) {
   }
 }
 
+function adminMiddleware(req, res, next) {
+  if (req.user.email !== 'somtoasogwa10@gmail.com') {
+    return res.status(403).json({ error: 'Access denied: Admin only' });
+  }
+  next();
+}
+
+function migrateSubmissions(submissions) {
+  let changed = false;
+  for (const sub of submissions) {
+    if (!sub.status) { sub.status = 'new'; changed = true; }
+    if (!sub.notes) { sub.notes = ''; changed = true; }
+  }
+  return changed;
+}
+
 app.post('/api/register', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
@@ -139,16 +155,75 @@ app.post('/api/inquiry', authMiddleware, async (req, res) => {
   res.json({ message: 'Your interest has been sent.', entry });
 });
 
-app.get('/api/submissions', authMiddleware, (req, res) => {
-  if (req.user.email !== 'somtoasogwa10@gmail.com') {
-    return res.status(403).json({ error: 'Access denied: Admin only' });
+app.get('/api/submissions', authMiddleware, adminMiddleware, (req, res) => {
+  const submissions = readJSON(SUBMISSIONS_FILE);
+  if (migrateSubmissions(submissions)) {
+    writeJSON(SUBMISSIONS_FILE, submissions);
   }
-  res.json(readJSON(SUBMISSIONS_FILE));
+  res.json(submissions);
 });
 
-app.get('/api/users', (req, res) => {
+app.patch('/api/submissions/:id', authMiddleware, adminMiddleware, (req, res) => {
+  const { id } = req.params;
+  const { status, notes } = req.body;
+  const submissions = readJSON(SUBMISSIONS_FILE);
+  const idx = submissions.findIndex(s => String(s.id) === String(id));
+  if (idx === -1) return res.status(404).json({ error: 'Inquiry not found' });
+  if (status !== undefined) submissions[idx].status = status;
+  if (notes !== undefined) submissions[idx].notes = notes;
+  writeJSON(SUBMISSIONS_FILE, submissions);
+  res.json(submissions[idx]);
+});
+
+app.delete('/api/submissions/:id', authMiddleware, adminMiddleware, (req, res) => {
+  const { id } = req.params;
+  let submissions = readJSON(SUBMISSIONS_FILE);
+  const idx = submissions.findIndex(s => String(s.id) === String(id));
+  if (idx === -1) return res.status(404).json({ error: 'Inquiry not found' });
+  submissions.splice(idx, 1);
+  writeJSON(SUBMISSIONS_FILE, submissions);
+  res.json({ message: 'Deleted' });
+});
+
+app.post('/api/submissions/bulk-delete', authMiddleware, adminMiddleware, (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array required' });
+  }
+  const idSet = new Set(ids.map(String));
+  let submissions = readJSON(SUBMISSIONS_FILE);
+  submissions = submissions.filter(s => !idSet.has(String(s.id)));
+  writeJSON(SUBMISSIONS_FILE, submissions);
+  res.json({ message: `Deleted ${ids.length} inquiries` });
+});
+
+app.patch('/api/submissions/bulk-status', authMiddleware, adminMiddleware, (req, res) => {
+  const { ids, status } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0 || !status) {
+    return res.status(400).json({ error: 'ids array and status required' });
+  }
+  const idSet = new Set(ids.map(String));
+  const submissions = readJSON(SUBMISSIONS_FILE);
+  for (const sub of submissions) {
+    if (idSet.has(String(sub.id))) sub.status = status;
+  }
+  writeJSON(SUBMISSIONS_FILE, submissions);
+  res.json({ message: `Updated ${ids.length} inquiries to ${status}` });
+});
+
+app.get('/api/users', authMiddleware, adminMiddleware, (req, res) => {
   const users = readJSON(USERS_FILE).map(({ password, ...u }) => u);
   res.json(users);
+});
+
+app.delete('/api/users/:id', authMiddleware, adminMiddleware, (req, res) => {
+  const { id } = req.params;
+  const users = readJSON(USERS_FILE);
+  const idx = users.findIndex(u => String(u.id) === String(id));
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+  users.splice(idx, 1);
+  writeJSON(USERS_FILE, users);
+  res.json({ message: 'User deleted' });
 });
 
 async function sendEmailNotification(entry) {

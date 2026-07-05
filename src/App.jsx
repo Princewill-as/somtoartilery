@@ -1061,24 +1061,34 @@ function InquiryBag({ items, open, onClose, onRemove }) {
 }
 
 function AdminDashboard({ token, onClose }) {
+  const [activeTab, setActiveTab] = useState("inquiries");
   const [inquiries, setInquiries] = useState([]);
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [interestFilter, setInterestFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState("date-desc");
+
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkStatus, setBulkStatus] = useState("new");
+
+  const [editingNotes, setEditingNotes] = useState(null);
+  const [notesText, setNotesText] = useState("");
+  const [expandedCards, setExpandedCards] = useState(new Set());
+
+  const authHeaders = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
     async function fetchInquiries() {
       try {
-        const res = await fetch("/api/submissions", {
-          headers: {
-            "Authorization": `Bearer ${token}`
-          }
-        });
-        if (!res.ok) {
-          throw new Error("Failed to fetch inquiries");
-        }
-        const data = await res.json();
-        setInquiries(data);
+        const res = await fetch("/api/submissions", { headers: authHeaders });
+        if (!res.ok) throw new Error("Failed to fetch inquiries");
+        setInquiries(await res.json());
       } catch (e) {
         setError(e.message);
       } finally {
@@ -1088,104 +1098,362 @@ function AdminDashboard({ token, onClose }) {
     fetchInquiries();
   }, [token]);
 
+  useEffect(() => {
+    if (activeTab !== "users") return;
+    async function fetchUsers() {
+      try {
+        const res = await fetch("/api/users", { headers: authHeaders });
+        if (!res.ok) throw new Error("Failed to fetch users");
+        setUsers(await res.json());
+      } catch (e) {
+        setError(e.message);
+      }
+    }
+    fetchUsers();
+  }, [activeTab, token]);
+
+  const uniqueInterests = [...new Set(inquiries.map(i => i.interest).filter(Boolean))];
+
   const filteredInquiries = inquiries.filter(item => {
     const term = searchTerm.toLowerCase();
-    return (
-      item.name.toLowerCase().includes(term) ||
-      item.email.toLowerCase().includes(term) ||
-      (item.interest && item.interest.toLowerCase().includes(term)) ||
-      (item.works && item.works.toLowerCase().includes(term))
-    );
+    if (term && !(item.name.toLowerCase().includes(term) || item.email.toLowerCase().includes(term) || (item.interest && item.interest.toLowerCase().includes(term)) || (item.works && item.works.toLowerCase().includes(term)))) return false;
+    if (statusFilter !== "all" && (item.status || "new") !== statusFilter) return false;
+    if (interestFilter !== "all" && item.interest !== interestFilter) return false;
+    if (dateFrom) {
+      const d = new Date(item.createdAt);
+      const f = new Date(dateFrom);
+      if (d < f) return false;
+    }
+    if (dateTo) {
+      const d = new Date(item.createdAt);
+      const t = new Date(dateTo);
+      t.setHours(23, 59, 59, 999);
+      if (d > t) return false;
+    }
+    return true;
   });
 
-  // Calculate stats
+  const sortedInquiries = [...filteredInquiries].sort((a, b) => {
+    switch (sortBy) {
+      case "date-asc": return new Date(a.createdAt) - new Date(b.createdAt);
+      case "date-desc": return new Date(b.createdAt) - new Date(a.createdAt);
+      case "name-asc": return a.name.localeCompare(b.name);
+      case "name-desc": return b.name.localeCompare(a.name);
+      case "status": {
+        const order = { new: 0, contacted: 1, resolved: 2 };
+        return (order[a.status] || 0) - (order[b.status] || 0);
+      }
+      default: return new Date(b.createdAt) - new Date(a.createdAt);
+    }
+  });
+
   const totalInquiries = inquiries.length;
   const uniqueUsers = new Set(inquiries.map(i => i.email)).size;
   const totalArtworksCount = inquiries.reduce((sum, item) => {
     if (!item.works) return sum;
-    const count = item.works.split(",").map(w => w.trim()).filter(Boolean).length;
-    return sum + count;
+    return sum + item.works.split(",").map(w => w.trim()).filter(Boolean).length;
   }, 0);
+  const statusCounts = { new: 0, contacted: 0, resolved: 0 };
+  inquiries.forEach(i => { statusCounts[i.status || "new"]++; });
+
+  const artworkCounts = {};
+  inquiries.forEach(i => {
+    if (!i.works) return;
+    i.works.split(",").map(w => w.trim()).filter(Boolean).forEach(name => {
+      artworkCounts[name] = (artworkCounts[name] || 0) + 1;
+    });
+  });
+  const topArtworks = Object.entries(artworkCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxArtworkCount = topArtworks.length > 0 ? topArtworks[0][1] : 1;
+
+  const monthlyCounts = {};
+  inquiries.forEach(i => {
+    const d = new Date(i.createdAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    monthlyCounts[key] = (monthlyCounts[key] || 0) + 1;
+  });
+  const months = Object.keys(monthlyCounts).sort();
+  const maxMonthCount = months.length > 0 ? Math.max(...months.map(k => monthlyCounts[k])) : 1;
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+  function toggleSelectAll() {
+    if (selectedIds.length === sortedInquiries.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(sortedInquiries.map(i => i.id));
+    }
+  }
+  function toggleCardExpand(id) {
+    setExpandedCards(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function updateStatus(id, status) {
+    try {
+      await fetch(`/api/submissions/${id}`, { method: "PATCH", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+      setInquiries(prev => prev.map(i => i.id === id ? { ...i, status } : i));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  async function saveNotes(id) {
+    try {
+      await fetch(`/api/submissions/${id}`, { method: "PATCH", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ notes: notesText }) });
+      setInquiries(prev => prev.map(i => i.id === id ? { ...i, notes: notesText } : i));
+      setEditingNotes(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  async function deleteInquiry(id) {
+    if (!confirm("Delete this inquiry?")) return;
+    try {
+      await fetch(`/api/submissions/${id}`, { method: "DELETE", headers: authHeaders });
+      setInquiries(prev => prev.filter(i => i.id !== id));
+      setSelectedIds(prev => prev.filter(x => x !== id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  async function bulkDelete() {
+    if (!confirm(`Delete ${selectedIds.length} inquiries?`)) return;
+    try {
+      await fetch("/api/submissions/bulk-delete", { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ ids: selectedIds }) });
+      setInquiries(prev => prev.filter(i => !selectedIds.includes(i.id)));
+      setSelectedIds([]);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  async function bulkUpdateStatus() {
+    try {
+      await fetch("/api/submissions/bulk-status", { method: "PATCH", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ ids: selectedIds, status: bulkStatus }) });
+      setInquiries(prev => prev.map(i => selectedIds.includes(i.id) ? { ...i, status: bulkStatus } : i));
+      setSelectedIds([]);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  async function deleteUser(id) {
+    if (!confirm("Delete this user?")) return;
+    try {
+      await fetch(`/api/users/${id}`, { method: "DELETE", headers: authHeaders });
+      setUsers(prev => prev.filter(u => u.id !== id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function exportCSV() {
+    const rows = [["Name", "Email", "Interest", "Artworks", "Status", "Notes", "Date"]];
+    sortedInquiries.forEach(i => {
+      rows.push([i.name, i.email, i.interest || "", i.works || "", i.status || "new", (i.notes || "").replace(/\n/g, " "), i.createdAt]);
+    });
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "inquiries.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (loading) return <section className="admin-dashboard"><p>Loading dashboard...</p></section>;
 
   return (
     <section className="admin-dashboard">
       <div className="admin-header">
-        <h2>Inquiries Dashboard</h2>
+        <h2>Admin Dashboard</h2>
         <button className="button secondary" onClick={onClose}>Back to Gallery</button>
       </div>
 
-      <div className="admin-stats">
-        <div className="stat-card">
-          <h3>Total Inquiries</h3>
-          <p>{totalInquiries}</p>
-        </div>
-        <div className="stat-card">
-          <h3>Unique Enquirers</h3>
-          <p>{uniqueUsers}</p>
-        </div>
-        <div className="stat-card">
-          <h3>Artworks Inquired</h3>
-          <p>{totalArtworksCount}</p>
-        </div>
+      {error && <p className="form-status error" style={{ marginBottom: 16 }}>Error: {error}</p>}
+
+      <div className="admin-tabs">
+        <button className={`admin-tab ${activeTab === "inquiries" ? "active" : ""}`} onClick={() => setActiveTab("inquiries")}>Inquiries</button>
+        <button className={`admin-tab ${activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab("users")}>Users</button>
+        <button className={`admin-tab ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}>Analytics</button>
       </div>
 
-      <div className="admin-controls">
-        <input 
-          type="text" 
-          placeholder="Search by name, email, interest, or artwork..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="search-input"
-        />
-      </div>
+      {activeTab === "inquiries" && (
+        <>
+          <div className="admin-stats">
+            <div className="stat-card"><h3>Total Inquiries</h3><p>{totalInquiries}</p></div>
+            <div className="stat-card"><h3>Unique Enquirers</h3><p>{uniqueUsers}</p></div>
+            <div className="stat-card"><h3>Artworks Inquired</h3><p>{totalArtworksCount}</p></div>
+            <div className="stat-card status-new"><h3>New</h3><p>{statusCounts.new}</p></div>
+            <div className="stat-card status-contacted"><h3>Contacted</h3><p>{statusCounts.contacted}</p></div>
+            <div className="stat-card status-resolved"><h3>Resolved</h3><p>{statusCounts.resolved}</p></div>
+          </div>
 
-      {loading && <p>Loading inquiries...</p>}
-      {error && <p className="form-status error">Error: {error}</p>}
+          <div className="admin-controls">
+            <input type="text" placeholder="Search by name, email, interest, or artwork..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="search-input" />
+            <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">All Statuses</option>
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <select className="filter-select" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
+              <option value="all">All Interests</option>
+              {uniqueInterests.map(int => <option key={int} value={int}>{int}</option>)}
+            </select>
+            <select className="filter-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              <option value="date-desc">Newest First</option>
+              <option value="date-asc">Oldest First</option>
+              <option value="name-asc">Name A-Z</option>
+              <option value="name-desc">Name Z-A</option>
+              <option value="status">By Status</option>
+            </select>
+          </div>
 
-      {!loading && !error && (
-        <div className="inquiries-list">
-          {filteredInquiries.length === 0 ? (
-            <div className="empty-state">
-              <h3>No inquiries found</h3>
-              <p>Either there are no submissions yet, or your search didn't match any records.</p>
+          <div className="admin-controls">
+            <label className="date-filter-label">From:</label>
+            <input type="date" className="date-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <label className="date-filter-label">To:</label>
+            <input type="date" className="date-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            {dateFrom || dateTo ? <button className="button-link" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
+          </div>
+
+          {selectedIds.length > 0 && (
+            <div className="bulk-toolbar">
+              <span>{selectedIds.length} selected</span>
+              <select className="filter-select" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="resolved">Resolved</option>
+              </select>
+              <button className="button secondary" onClick={bulkUpdateStatus}>Set Status</button>
+              <button className="button danger" onClick={bulkDelete}>Delete Selected</button>
+              <button className="button-link" onClick={() => setSelectedIds([])}>Clear Selection</button>
             </div>
+          )}
+
+          <div className="inquiries-toolbar">
+            <span className="results-count">{sortedInquiries.length} result{sortedInquiries.length !== 1 ? "s" : ""}</span>
+            <button className="button secondary" onClick={exportCSV}>Export CSV</button>
+          </div>
+
+          {sortedInquiries.length === 0 ? (
+            <div className="empty-state"><h3>No inquiries found</h3><p>Adjust your filters or check back later.</p></div>
           ) : (
-            filteredInquiries.map((inquiry) => {
-              const artworks = inquiry.works ? inquiry.works.split(",").map(w => w.trim()).filter(Boolean) : [];
-              return (
-                <div key={inquiry.id} className="inquiry-card">
-                  <div className="inquiry-meta">
-                    <div className="inquiry-user">
-                      <h4>{inquiry.name}</h4>
-                      <p>{inquiry.email}</p>
+            <div className="inquiries-list">
+              {sortedInquiries.map((inquiry) => {
+                const artworks = inquiry.works ? inquiry.works.split(",").map(w => w.trim()).filter(Boolean) : [];
+                const isSelected = selectedIds.includes(inquiry.id);
+                const isExpanded = expandedCards.has(inquiry.id);
+                const status = inquiry.status || "new";
+                return (
+                  <div key={inquiry.id} className={`inquiry-card ${isSelected ? "selected" : ""}`}>
+                    <div className="inquiry-checkbox-row">
+                      <input type="checkbox" className="inquiry-checkbox" checked={isSelected} onChange={() => toggleSelect(inquiry.id)} />
+                      <span className={`status-badge status-${status}`}>{status}</span>
+                      <div className="inquiry-actions">
+                        <select className="status-select" value={status} onChange={(e) => updateStatus(inquiry.id, e.target.value)}>
+                          <option value="new">New</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="resolved">Resolved</option>
+                        </select>
+                        <button className="icon-btn" onClick={() => toggleCardExpand(inquiry.id)} title={isExpanded ? "Collapse notes" : "Expand notes"}>{isExpanded ? "\u2212" : "+"}</button>
+                        <button className="icon-btn danger" onClick={() => deleteInquiry(inquiry.id)} title="Delete inquiry">&times;</button>
+                      </div>
                     </div>
-                    <span className="inquiry-date">
-                      {new Date(inquiry.createdAt).toLocaleDateString(undefined, {
-                        year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                      })}
-                    </span>
-                  </div>
-                  <div className="inquiry-details">
-                    {inquiry.interest && (
-                      <div className="inquiry-field">
-                        <h5>Area of Interest</h5>
-                        <p>{inquiry.interest}</p>
+                    <div className="inquiry-meta">
+                      <div className="inquiry-user"><h4>{inquiry.name}</h4><p>{inquiry.email}</p></div>
+                      <span className="inquiry-date">{new Date(inquiry.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <div className="inquiry-details">
+                      {inquiry.interest && <div className="inquiry-field"><h5>Area of Interest</h5><p>{inquiry.interest}</p></div>}
+                      {artworks.length > 0 && <div className="inquiry-field"><h5>Selected Artworks</h5><div className="artworks-list">{artworks.map((art, idx) => <span key={idx} className="artwork-tag">{art}</span>)}</div></div>}
+                    </div>
+                    {isExpanded && (
+                      <div className="inquiry-notes">
+                        <h5>Notes</h5>
+                        {editingNotes === inquiry.id ? (
+                          <div className="notes-edit">
+                            <textarea className="notes-textarea" value={notesText} onChange={(e) => setNotesText(e.target.value)} rows={3} placeholder="Add private notes..." />
+                            <div className="notes-actions">
+                              <button className="button secondary" onClick={() => saveNotes(inquiry.id)}>Save</button>
+                              <button className="button-link" onClick={() => setEditingNotes(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="notes-display">
+                            <p>{inquiry.notes || <em>No notes yet</em>}</p>
+                            <button className="button-link" onClick={() => { setEditingNotes(inquiry.id); setNotesText(inquiry.notes || ""); }}>Edit Notes</button>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {artworks.length > 0 && (
-                      <div className="inquiry-field">
-                        <h5>Selected Artworks</h5>
-                        <div className="artworks-list">
-                          {artworks.map((art, idx) => (
-                            <span key={idx} className="artwork-tag">{art}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === "users" && (
+        <>
+          <div className="admin-stats">
+            <div className="stat-card"><h3>Total Users</h3><p>{users.length}</p></div>
+          </div>
+          {users.length === 0 ? (
+            <div className="empty-state"><h3>No users found</h3></div>
+          ) : (
+            <div className="users-table-wrap">
+              <table className="users-table">
+                <thead>
+                  <tr><th>Name</th><th>Email</th><th>Joined</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td>{u.name}</td>
+                      <td>{u.email}</td>
+                      <td>{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td><button className="icon-btn danger" onClick={() => deleteUser(u.id)} title="Delete user">&times;</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === "analytics" && (
+        <div className="analytics-section">
+          <h3>Inquiries Over Time</h3>
+          {months.length === 0 ? <p>No data yet.</p> : (
+            <div className="chart-container">
+              {months.map(m => (
+                <div key={m} className="chart-bar-wrap">
+                  <div className="chart-bar" style={{ height: `${(monthlyCounts[m] / maxMonthCount) * 100}%` }} />
+                  <span className="chart-bar-value">{monthlyCounts[m]}</span>
+                  <span className="chart-bar-label">{m}</span>
                 </div>
-              );
-            })
+              ))}
+            </div>
+          )}
+
+          <h3>Top Inquired Artworks</h3>
+          {topArtworks.length === 0 ? <p>No data yet.</p> : (
+            <div className="chart-container horizontal">
+              {topArtworks.map(([name, count]) => (
+                <div key={name} className="chart-bar-h-wrap">
+                  <span className="chart-bar-h-label">{name}</span>
+                  <div className="chart-bar-h-track">
+                    <div className="chart-bar-h" style={{ width: `${(count / maxArtworkCount) * 100}%` }} />
+                  </div>
+                  <span className="chart-bar-h-value">{count}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
