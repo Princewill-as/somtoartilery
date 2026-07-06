@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Rockybilly';
+  src: url('/fonts/Rockybilly.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --ink: #171515;
   --paper: #f7f1e7;
@@ -125,8 +133,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 
 .brand {
   gap: 10px;
-  font-family: var(--font-headings);
-  font-weight: 200;
+  font-family: 'Rockybilly', var(--font-headings);
+  font-weight: normal;
   text-transform: uppercase;
 }
 
