@@ -755,7 +755,7 @@ function InquiryBag({ items, open, onClose, onRemove }) {
 }
 
 function AdminDashboard({ token, onClose }) {
-  const [activeTab, setActiveTab] = useState("inquiries");
+  const [activeTab, setActiveTab] = useState("overview");
   const [inquiries, setInquiries] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -841,14 +841,37 @@ function AdminDashboard({ token, onClose }) {
     }
   });
 
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
   const totalInquiries = inquiries.length;
   const uniqueUsers = new Set(inquiries.map(i => i.email)).size;
+
+  const newInquiries = inquiries.filter(i => {
+    const d = new Date(i.createdAt);
+    return d >= sevenDaysAgo;
+  }).length;
+
+  const previousWeekInquiries = inquiries.filter(i => {
+    const d = new Date(i.createdAt);
+    return d >= fourteenDaysAgo && d < sevenDaysAgo;
+  }).length;
+
+  const weeklyChange = previousWeekInquiries > 0
+    ? Math.round(((newInquiries - previousWeekInquiries) / previousWeekInquiries) * 100)
+    : newInquiries > 0 ? 100 : 0;
+
+  const emailCounts = {};
+  inquiries.forEach(i => {
+    emailCounts[i.email] = (emailCounts[i.email] || 0) + 1;
+  });
+  const returningClients = Object.values(emailCounts).filter(count => count >= 2).length;
+
   const totalArtworksCount = inquiries.reduce((sum, item) => {
     if (!item.works) return sum;
     return sum + item.works.split(",").map(w => w.trim()).filter(Boolean).length;
   }, 0);
-  const statusCounts = { new: 0, contacted: 0, resolved: 0 };
-  inquiries.forEach(i => { statusCounts[i.status || "new"]++; });
 
   const artworkCounts = {};
   inquiries.forEach(i => {
@@ -858,7 +881,10 @@ function AdminDashboard({ token, onClose }) {
     });
   });
   const topArtworks = Object.entries(artworkCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const maxArtworkCount = topArtworks.length > 0 ? topArtworks[0][1] : 1;
+  const mostViewedArtwork = topArtworks.length > 0 ? topArtworks[0][0] : "N/A";
+
+  const statusCounts = { new: 0, contacted: 0, resolved: 0 };
+  inquiries.forEach(i => { statusCounts[i.status || "new"]++; });
 
   const monthlyCounts = {};
   inquiries.forEach(i => {
@@ -868,6 +894,14 @@ function AdminDashboard({ token, onClose }) {
   });
   const months = Object.keys(monthlyCounts).sort();
   const maxMonthCount = months.length > 0 ? Math.max(...months.map(k => monthlyCounts[k])) : 1;
+  const maxArtworkCount = topArtworks.length > 0 ? topArtworks[0][1] : 1;
+
+  function getGreeting() {
+    const hour = now.getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  }
 
   function toggleSelect(id) {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -961,17 +995,78 @@ function AdminDashboard({ token, onClose }) {
   return (
     <section className="admin-dashboard">
       <div className="admin-header">
-        <h2>Admin Dashboard</h2>
+        <div className="admin-header-left">
+          <h2>{getGreeting()}, Somto</h2>
+          <p className="admin-subtitle">Here's what's happening in your gallery today.</p>
+        </div>
         <button className="button secondary" onClick={onClose}>Back to Gallery</button>
       </div>
 
       {error && <p className="form-status error" style={{ marginBottom: 16 }}>Error: {error}</p>}
 
       <div className="admin-tabs">
+        <button className={`admin-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>Overview</button>
         <button className={`admin-tab ${activeTab === "inquiries" ? "active" : ""}`} onClick={() => setActiveTab("inquiries")}>Inquiries</button>
         <button className={`admin-tab ${activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab("users")}>Users</button>
         <button className={`admin-tab ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}>Analytics</button>
       </div>
+
+      {activeTab === "overview" && (
+        <>
+          <div className="overview-quick-stats">
+            <div className="quick-stat-card">
+              <div className="quick-stat-icon">📩</div>
+              <div className="quick-stat-info">
+                <p className="quick-stat-number">{newInquiries}</p>
+                <p className="quick-stat-label">New Inquiries</p>
+              </div>
+            </div>
+            <div className="quick-stat-card">
+              <div className="quick-stat-icon">👥</div>
+              <div className="quick-stat-info">
+                <p className="quick-stat-number">{returningClients}</p>
+                <p className="quick-stat-label">Returning Clients</p>
+              </div>
+            </div>
+            <div className="quick-stat-card">
+              <div className="quick-stat-icon">🎨</div>
+              <div className="quick-stat-info">
+                <p className="quick-stat-number">{totalArtworksCount}</p>
+                <p className="quick-stat-label">Artwork Interests</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-stats-grid">
+            <div className="overview-stat-card">
+              <div className="overview-stat-header">
+                <span className="overview-stat-icon">📩</span>
+                <h3>Total Inquiries</h3>
+              </div>
+              <p className="overview-stat-value">{totalInquiries}</p>
+              <p className={`overview-stat-change ${weeklyChange >= 0 ? "positive" : "negative"}`}>
+                {weeklyChange >= 0 ? "↑" : "↓"} {Math.abs(weeklyChange)}% this week
+              </p>
+            </div>
+            <div className="overview-stat-card">
+              <div className="overview-stat-header">
+                <span className="overview-stat-icon">👥</span>
+                <h3>Unique Visitors</h3>
+              </div>
+              <p className="overview-stat-value">{uniqueUsers}</p>
+              <p className="overview-stat-change positive">↑ {newInquiries} today</p>
+            </div>
+            <div className="overview-stat-card">
+              <div className="overview-stat-header">
+                <span className="overview-stat-icon">🎨</span>
+                <h3>Artworks Viewed</h3>
+              </div>
+              <p className="overview-stat-value">{totalArtworksCount}</p>
+              <p className="overview-stat-subtitle">Most viewed: "{mostViewedArtwork}"</p>
+            </div>
+          </div>
+        </>
+      )}
 
       {activeTab === "inquiries" && (
         <>
