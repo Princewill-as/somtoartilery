@@ -754,6 +754,116 @@ function InquiryBag({ items, open, onClose, onRemove }) {
   );
 }
 
+function OverviewDetail({ filter, inquiries, users, artworkCounts, emailCounts, topArtworks, onBack, authHeaders }) {
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const returningClientEmails = Object.entries(emailCounts)
+    .filter(([_, count]) => count >= 2)
+    .map(([email]) => email);
+
+  const newInquiriesList = inquiries.filter(i => new Date(i.createdAt) >= sevenDaysAgo);
+  const returningClientsList = inquiries.filter(i => returningClientEmails.includes(i.email));
+  const totalArtworksList = inquiries.filter(i => i.works && i.works.trim().length > 0);
+  const uniqueEmails = [...new Set(inquiries.map(i => i.email))];
+  const artworksList = Object.entries(artworkCounts).sort((a, b) => b[1] - a[1]);
+
+  let title = "";
+  let items = [];
+
+  switch (filter) {
+    case "new-inquiries":
+      title = "New Inquiries (Last 7 Days)";
+      items = newInquiriesList;
+      break;
+    case "returning-clients":
+      title = "Returning Clients";
+      items = returningClientsList;
+      break;
+    case "artwork-interests":
+      title = "Artwork Interests";
+      items = totalArtworksList;
+      break;
+    case "total-inquiries":
+      title = "All Inquiries";
+      items = inquiries;
+      break;
+    case "unique-visitors":
+      title = "Unique Visitors";
+      items = uniqueEmails.map(email => inquiries.find(i => i.email === email)).filter(Boolean);
+      break;
+    case "artworks-viewed":
+      title = "Artworks Viewed";
+      items = artworksList;
+      break;
+    default:
+      items = inquiries;
+  }
+
+  return (
+    <div className="overview-detail">
+      <div className="overview-detail-header">
+        <button className="button secondary" onClick={onBack}>← Back to Overview</button>
+        <h3>{title}</h3>
+        <p className="results-count">{filter === "artworks-viewed" ? `${items.length} unique artworks` : `${items.length} item${items.length !== 1 ? "s" : ""}`}</p>
+      </div>
+
+      {filter === "artworks-viewed" ? (
+        <div className="artworks-detail-list">
+          {items.map(([name, count]) => (
+            <div key={name} className="artwork-detail-card">
+              <div className="artwork-detail-info">
+                <h4>{name}</h4>
+                <p>{count} inquiry{count !== 1 ? "ies" : ""}</p>
+              </div>
+              <div className="artwork-detail-bar">
+                <div className="artwork-detail-bar-fill" style={{ width: `${(count / items[0][1]) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filter === "unique-visitors" ? (
+        <div className="inquiries-list">
+          {items.map(inquiry => (
+            <div key={inquiry.id} className="inquiry-card">
+              <div className="inquiry-meta">
+                <div className="inquiry-user"><h4>{inquiry.name}</h4><p>{inquiry.email}</p></div>
+                <span className="inquiry-date">{new Date(inquiry.createdAt).toLocaleDateString()}</span>
+              </div>
+              <div className="inquiry-details">
+                {inquiry.interest && <div className="inquiry-field"><h5>Interest</h5><p>{inquiry.interest}</p></div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="inquiries-list">
+          {items.map(inquiry => {
+            const artworks = inquiry.works ? inquiry.works.split(",").map(w => w.trim()).filter(Boolean) : [];
+            return (
+              <div key={inquiry.id} className="inquiry-card">
+                <div className="inquiry-meta">
+                  <div className="inquiry-user"><h4>{inquiry.name}</h4><p>{inquiry.email}</p></div>
+                  <span className="inquiry-date">{new Date(inquiry.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</span>
+                </div>
+                <div className="inquiry-details">
+                  {inquiry.interest && <div className="inquiry-field"><h5>Interest</h5><p>{inquiry.interest}</p></div>}
+                  {artworks.length > 0 && (
+                    <div className="inquiry-field">
+                      <h5>Artworks</h5>
+                      <div className="artworks-list">{artworks.map((art, idx) => <span key={idx} className="artwork-tag">{art}</span>)}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminDashboard({ token, onClose }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [inquiries, setInquiries] = useState([]);
@@ -774,6 +884,7 @@ function AdminDashboard({ token, onClose }) {
   const [editingNotes, setEditingNotes] = useState(null);
   const [notesText, setNotesText] = useState("");
   const [expandedCards, setExpandedCards] = useState(new Set());
+  const [overviewFilter, setOverviewFilter] = useState(null);
 
   const authHeaders = { Authorization: `Bearer ${token}` };
 
@@ -1005,66 +1116,81 @@ function AdminDashboard({ token, onClose }) {
       {error && <p className="form-status error" style={{ marginBottom: 16 }}>Error: {error}</p>}
 
       <div className="admin-tabs">
-        <button className={`admin-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>Overview</button>
-        <button className={`admin-tab ${activeTab === "inquiries" ? "active" : ""}`} onClick={() => setActiveTab("inquiries")}>Inquiries</button>
-        <button className={`admin-tab ${activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab("users")}>Users</button>
-        <button className={`admin-tab ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}>Analytics</button>
+        <button className={`admin-tab ${activeTab === "overview" ? "active" : ""}`} onClick={() => { setActiveTab("overview"); setOverviewFilter(null); }}>Overview</button>
+        <button className={`admin-tab ${activeTab === "inquiries" ? "active" : ""}`} onClick={() => { setActiveTab("inquiries"); setOverviewFilter(null); }}>Inquiries</button>
+        <button className={`admin-tab ${activeTab === "users" ? "active" : ""}`} onClick={() => { setActiveTab("users"); setOverviewFilter(null); }}>Users</button>
+        <button className={`admin-tab ${activeTab === "analytics" ? "active" : ""}`} onClick={() => { setActiveTab("analytics"); setOverviewFilter(null); }}>Analytics</button>
       </div>
 
       {activeTab === "overview" && (
         <>
-          <div className="overview-quick-stats">
-            <div className="quick-stat-card">
-              <div className="quick-stat-icon">📩</div>
-              <div className="quick-stat-info">
-                <p className="quick-stat-number">{newInquiries}</p>
-                <p className="quick-stat-label">New Inquiries</p>
+          {!overviewFilter ? (
+            <>
+              <div className="overview-quick-stats">
+                <button className="quick-stat-card clickable" onClick={() => setOverviewFilter("new-inquiries")}>
+                  <div className="quick-stat-icon">📩</div>
+                  <div className="quick-stat-info">
+                    <p className="quick-stat-number">{newInquiries}</p>
+                    <p className="quick-stat-label">New Inquiries</p>
+                  </div>
+                </button>
+                <button className="quick-stat-card clickable" onClick={() => setOverviewFilter("returning-clients")}>
+                  <div className="quick-stat-icon">👥</div>
+                  <div className="quick-stat-info">
+                    <p className="quick-stat-number">{returningClients}</p>
+                    <p className="quick-stat-label">Returning Clients</p>
+                  </div>
+                </button>
+                <button className="quick-stat-card clickable" onClick={() => setOverviewFilter("artwork-interests")}>
+                  <div className="quick-stat-icon">🎨</div>
+                  <div className="quick-stat-info">
+                    <p className="quick-stat-number">{totalArtworksCount}</p>
+                    <p className="quick-stat-label">Artwork Interests</p>
+                  </div>
+                </button>
               </div>
-            </div>
-            <div className="quick-stat-card">
-              <div className="quick-stat-icon">👥</div>
-              <div className="quick-stat-info">
-                <p className="quick-stat-number">{returningClients}</p>
-                <p className="quick-stat-label">Returning Clients</p>
-              </div>
-            </div>
-            <div className="quick-stat-card">
-              <div className="quick-stat-icon">🎨</div>
-              <div className="quick-stat-info">
-                <p className="quick-stat-number">{totalArtworksCount}</p>
-                <p className="quick-stat-label">Artwork Interests</p>
-              </div>
-            </div>
-          </div>
 
-          <div className="overview-stats-grid">
-            <div className="overview-stat-card">
-              <div className="overview-stat-header">
-                <span className="overview-stat-icon">📩</span>
-                <h3>Total Inquiries</h3>
+              <div className="overview-stats-grid">
+                <button className="overview-stat-card clickable" onClick={() => setOverviewFilter("total-inquiries")}>
+                  <div className="overview-stat-header">
+                    <span className="overview-stat-icon">📩</span>
+                    <h3>Total Inquiries</h3>
+                  </div>
+                  <p className="overview-stat-value">{totalInquiries}</p>
+                  <p className={`overview-stat-change ${weeklyChange >= 0 ? "positive" : "negative"}`}>
+                    {weeklyChange >= 0 ? "↑" : "↓"} {Math.abs(weeklyChange)}% this week
+                  </p>
+                </button>
+                <button className="overview-stat-card clickable" onClick={() => setOverviewFilter("unique-visitors")}>
+                  <div className="overview-stat-header">
+                    <span className="overview-stat-icon">👥</span>
+                    <h3>Unique Visitors</h3>
+                  </div>
+                  <p className="overview-stat-value">{uniqueUsers}</p>
+                  <p className="overview-stat-change positive">↑ {newInquiries} today</p>
+                </button>
+                <button className="overview-stat-card clickable" onClick={() => setOverviewFilter("artworks-viewed")}>
+                  <div className="overview-stat-header">
+                    <span className="overview-stat-icon">🎨</span>
+                    <h3>Artworks Viewed</h3>
+                  </div>
+                  <p className="overview-stat-value">{totalArtworksCount}</p>
+                  <p className="overview-stat-subtitle">Most viewed: "{mostViewedArtwork}"</p>
+                </button>
               </div>
-              <p className="overview-stat-value">{totalInquiries}</p>
-              <p className={`overview-stat-change ${weeklyChange >= 0 ? "positive" : "negative"}`}>
-                {weeklyChange >= 0 ? "↑" : "↓"} {Math.abs(weeklyChange)}% this week
-              </p>
-            </div>
-            <div className="overview-stat-card">
-              <div className="overview-stat-header">
-                <span className="overview-stat-icon">👥</span>
-                <h3>Unique Visitors</h3>
-              </div>
-              <p className="overview-stat-value">{uniqueUsers}</p>
-              <p className="overview-stat-change positive">↑ {newInquiries} today</p>
-            </div>
-            <div className="overview-stat-card">
-              <div className="overview-stat-header">
-                <span className="overview-stat-icon">🎨</span>
-                <h3>Artworks Viewed</h3>
-              </div>
-              <p className="overview-stat-value">{totalArtworksCount}</p>
-              <p className="overview-stat-subtitle">Most viewed: "{mostViewedArtwork}"</p>
-            </div>
-          </div>
+            </>
+          ) : (
+            <OverviewDetail
+              filter={overviewFilter}
+              inquiries={inquiries}
+              users={users}
+              artworkCounts={artworkCounts}
+              emailCounts={emailCounts}
+              topArtworks={topArtworks}
+              onBack={() => setOverviewFilter(null)}
+              authHeaders={authHeaders}
+            />
+          )}
         </>
       )}
 
