@@ -6,7 +6,9 @@
     "email": "somtoasogwa10@gmail.com",
     "interest": "Artwork inquiry",
     "works": "United Series by Michael Amba, Dreamscape, Abstract Study, Abstract Lady",
-    "createdAt": "2026-06-30T13:12:02.279Z"
+    "createdAt": "2026-06-30T13:12:02.279Z",
+    "status": "new",
+    "notes": ""
   },
   {
     "id": 1782982779153,
@@ -15,7 +17,9 @@
     "email": "somtoasogwa10@gmail.com",
     "interest": "Private viewing",
     "works": "work with you actively \n",
-    "createdAt": "2026-07-02T08:59:39.153Z"
+    "createdAt": "2026-07-02T08:59:39.153Z",
+    "status": "new",
+    "notes": ""
   },
   {
     "id": 1783030710267,
@@ -24,7 +28,9 @@
     "email": "test@test.com",
     "interest": "Artwork inquiry",
     "works": "Abstract Lady, Dreamscape",
-    "createdAt": "2026-07-02T22:18:30.267Z"
+    "createdAt": "2026-07-02T22:18:30.267Z",
+    "status": "new",
+    "notes": ""
   },
   {
     "id": 1783031543598,
@@ -33,6 +39,8 @@
     "email": "somtoasogwa10@gmail.com",
     "interest": "Private viewing",
     "works": "job [qbcn;jqlc[bqnC",
-    "createdAt": "2026-07-02T22:32:23.598Z"
+    "createdAt": "2026-07-02T22:32:23.598Z",
+    "status": "new",
+    "notes": ""
   }
 ]
